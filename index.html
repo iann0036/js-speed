@@ -1,0 +1,298 @@
+<!-- (c) iann0036, 2013 -->
+<html>
+<head>
+<script>
+/* Constants */
+var COLOR_VARIANCE_THRESHOLD = 20;
+var BLACK_DARKNESS_THRESHOLD = 90;
+var BLACK_VARIANCE_THRESHOLD = 30;
+var WHITE_DARKNESS_THRESHOLD = 150;
+var WHITE_VARIANCE_THRESHOLD = 30;
+var GREYSCALE_VARIANCE_THRESHOLD = 30;
+var MIN_RED_THICKNESS = 3;
+var MIN_WHITE_THICKNESS = 20;
+var X_INITIAL_OFFSET = 10;
+var BOUNDARY_THRESHOLD = 10;
+var MIN_GREYSCALE_RATIO = 0.7;
+
+/* Helpers */
+function setPixel(imageData, x, y, r, g, b, a) {
+    var index = (x + y * imageData.width) * 4;
+    imageData.data[index] = r;
+    imageData.data[index+1] = g;
+    imageData.data[index+2] = b;
+    imageData.data[index+3] = a;
+	
+	return imageData;
+}
+
+function getRed(imageData, x, y) {
+	index = (x + y * imageData.width) * 4;
+	return imageData.data[index];
+}
+
+function getGreen(imageData, x, y) {
+	index = (x + y * imageData.width) * 4;
+	return imageData.data[index+1];
+}
+
+function getBlue(imageData, x, y) {
+	index = (x + y * imageData.width) * 4;
+	return imageData.data[index+2];
+}
+
+function isRedThreshold(imageData, x, y) {
+	var redComponent = getRed(imageData, x, y);
+	var greenComponent = getGreen(imageData, x, y);
+	var blueComponent = getBlue(imageData, x, y);
+	
+	return (
+		(redComponent > getGreen(imageData, x, y) + COLOR_VARIANCE_THRESHOLD) &&
+		(redComponent > getBlue(imageData, x, y) + COLOR_VARIANCE_THRESHOLD)
+	);
+}
+
+function isBlackThreshold(imageData, x, y) {
+	var redComponent = getRed(imageData, x, y);
+	var greenComponent = getGreen(imageData, x, y);
+	var blueComponent = getBlue(imageData, x, y);
+	
+	return (
+		(redComponent < BLACK_DARKNESS_THRESHOLD) &&
+		(greenComponent < BLACK_DARKNESS_THRESHOLD) &&
+		(blueComponent < BLACK_DARKNESS_THRESHOLD) &&
+		maxdiff(redComponent, greenComponent, blueComponent) < BLACK_VARIANCE_THRESHOLD
+	);
+}
+
+function isGreyscale(imageData, x, y) {
+	var redComponent = getRed(imageData, x, y);
+	var greenComponent = getGreen(imageData, x, y);
+	var blueComponent = getBlue(imageData, x, y);
+	
+	return maxdiff(redComponent, greenComponent, blueComponent) < GREYSCALE_VARIANCE_THRESHOLD;
+}
+
+function isWhiteThreshold(imageData, x, y) {
+	var redComponent = getRed(imageData, x, y);
+	var greenComponent = getGreen(imageData, x, y);
+	var blueComponent = getBlue(imageData, x, y);
+	
+	return (
+		(redComponent > WHITE_DARKNESS_THRESHOLD) &&
+		(greenComponent > WHITE_DARKNESS_THRESHOLD) &&
+		(blueComponent > WHITE_DARKNESS_THRESHOLD) &&
+		maxdiff(redComponent, greenComponent, blueComponent) < WHITE_VARIANCE_THRESHOLD
+	);
+}
+
+function maxdiff(a, b, c) {
+	return Math.max(
+		(Math.max(a,b)-Math.min(a,b)),
+		(Math.max(a,c)-Math.min(a,c)),
+		(Math.max(b,c)-Math.min(b,c))
+	);
+}
+
+function reserveCoordinate(x, y, top, middle, bottom) {
+	var coord = new Object();
+	coord.midx = x;
+	coord.midy = y + ((top + middle + bottom)/2);
+	coord.top = top;
+	coord.middle = middle;
+	coord.bottom = bottom;
+	coord.x1 = x - ((top + middle + bottom)/2);
+	coord.y1 = y;
+	coord.x2 = x + ((top + middle + bottom)/2);
+	coord.y2 = y + ((top + middle + bottom));
+	coord.innerradius = middle/2;
+	coord.outerradius = (top + bottom)/2;
+	coord.score = 50;
+	// Additional score check
+	//if (Math.max(a,b)-Math.min(a,b)); // TBC
+	
+	return coord;
+}
+
+function checkCoordinates(foundCoordinates, x, y) {
+	for (var i=0; i<foundCoordinates.length; i++) {
+		if (
+			x > (foundCoordinates[i].x1 - BOUNDARY_THRESHOLD) &&
+			x < (foundCoordinates[i].x2 + BOUNDARY_THRESHOLD) &&
+			y > (foundCoordinates[i].y1 - BOUNDARY_THRESHOLD) &&
+			y < (foundCoordinates[i].y2 + BOUNDARY_THRESHOLD)
+		)
+			return false;
+	}
+	return true;
+}
+
+function processFoundCoordinates(foundCoordinates, ctx) {
+	for (var i=0; i<foundCoordinates.length; i++) {
+		ctx.beginPath();
+		ctx.arc(foundCoordinates[i].midx + X_INITIAL_OFFSET, foundCoordinates[i].midy, foundCoordinates[i].innerradius + foundCoordinates[i].outerradius, 0, 2 * Math.PI, false);
+		ctx.fillStyle = "rgba(0, 220, 0, 0.5)";
+		ctx.fill();
+		ctx.lineWidth = 4;
+		ctx.strokeStyle = "rgba(0, 0, 220, 0.5)";
+		ctx.stroke();
+	}
+}
+
+/* Main */
+function processImage(canvasnumber) {
+	var cvs = document.getElementById('cvs' + canvasnumber);
+	var ctx = cvs.getContext('2d');
+	var redComponent;
+	var greenComponent;
+	var blueComponent;
+	var foundCoordinates = new Array();
+	var coordinate;
+	
+	var img = new Image();
+	img.onload = function() {
+		cvs.width = img.width;
+		cvs.height = img.height;
+		ctx.drawImage(img, 0, 0);
+		var imageData = ctx.getImageData(0, 0, img.width, img.height);
+		for (var y=0; y<img.height; y++) {
+			for (var x=0; x<img.width; x++) {
+				if (isRedThreshold(imageData, x, y)) {
+					if (checkCoordinates(foundCoordinates, x, y)) {
+						coordinate = check1(x, y, imageData, img);
+						if (coordinate != false) {
+							if (check4(coordinate, imageData))
+								foundCoordinates.push(coordinate);
+						}
+					}
+				}
+			}
+		}
+		
+		ctx.putImageData(imageData,0,0);
+		
+		processFoundCoordinates(foundCoordinates, ctx);
+	}
+	img.src="sign" + canvasnumber + ".jpg";
+}
+
+/* Check functions */
+// Check 1 passes where there is an amount of red vertically, followed by non-red, followed by more red
+function check1(x, y, imageData, img) {
+	// Top section
+	var top_red_thickness = 0;
+	while (isRedThreshold(imageData, x, y + top_red_thickness)) {
+		top_red_thickness++;
+		if (y + top_red_thickness > img.height) { // break out if hit the end of image
+			top_red_thickness = 0;
+			break;
+		}
+	}
+	// Middle section
+	if (top_red_thickness > MIN_RED_THICKNESS) {
+		var white_thickness = 0;
+		while (!isRedThreshold(imageData, x, y + top_red_thickness + white_thickness)) {
+			white_thickness++;
+			if (y + top_red_thickness + white_thickness > img.height) { // break out if hit the end of image
+				white_thickness = 0;
+				break;
+			}
+		}
+	// Bottom section
+		if (white_thickness > MIN_WHITE_THICKNESS) {
+			var bottom_red_thickness = 0;
+			while (isRedThreshold(imageData, x, y + top_red_thickness + white_thickness + bottom_red_thickness)) {
+				bottom_red_thickness++;
+				if (y + top_red_thickness + white_thickness + bottom_red_thickness > img.height) // stop if end of image
+					break;
+			}
+			
+			return reserveCoordinate(x, y, top_red_thickness, white_thickness, bottom_red_thickness); // draw circle later
+		}
+	}
+	
+	return false;
+}
+
+// Check 2 tests all points within the estimates circle for greyscale
+function check2(coord, imageData) {
+	var greypoints = 0;
+	var colorpoints = 0;
+
+	for (var y=coord.y1; y<coord.y2; y++) {
+		for (var x=coord.x1; x<coord.x2; x++) {
+			if (Math.pow(x-coord.midx,2) + Math.pow(y-coord.midy,2) < Math.pow(coord.innerradius,2)) { //tests for within circle
+				if (isWhiteThreshold(imageData, x, y) || isBlackThreshold(imageData, x, y))
+					greypoints++;
+				else
+					colorpoints++;
+			}
+		}
+	}
+	
+	return (greypoints/(greypoints+colorpoints) > MIN_GREYSCALE_RATIO);
+}
+
+// Check 3 follows the red dots all the way to the bottom of the sign
+function check3(coord, imageData) {
+	var x = coord.midx;
+	var y = coord.y1;
+	var xlimit = false;
+	
+	while (true) {
+		if (isRedThreshold(imageData, x, y+1))
+			y++;
+		else if (isRedThreshold(imageData, x-1, y) && !xlimit)
+			x--;
+		else if (isRedThreshold(imageData, x+1, y))
+			x++;
+		else
+			return false;
+		if (y>(coord.y2)-coord.bottom)
+			return true;
+	}
+}
+
+function check4(coord, imageData) {
+	return (isWhiteThreshold(imageData,coord.midx,coord.y1+coord.top) &&
+	isWhiteThreshold(imageData,coord.midx,coord.y1+coord.top+coord.middle-1));
+}
+
+function processImages() {
+	processImage(1);
+	processImage(2);
+	processImage(3);
+	processImage(4);
+	processImage(5);
+	processImage(6);
+	processImage(7);
+	processImage(8);
+	processImage(9);
+	processImage(10);
+}
+
+</script>
+</head>
+<body onload="processImages()">
+<canvas id="cvs1" name="cvs1" width="img.width" height="img.height"></canvas><br />
+<img src="sign1.jpg" /><br />
+<canvas id="cvs2" name="cvs2" width="img.width" height="img.height"></canvas><br />
+<img src="sign2.jpg" /><br />
+<canvas id="cvs3" name="cvs3" width="img.width" height="img.height"></canvas><br />
+<img src="sign3.jpg" /><br />
+<canvas id="cvs4" name="cvs4" width="img.width" height="img.height"></canvas><br />
+<img src="sign4.jpg" /><br />
+<canvas id="cvs5" name="cvs5" width="img.width" height="img.height"></canvas><br />
+<img src="sign5.jpg" /><br />
+<canvas id="cvs6" name="cvs6" width="img.width" height="img.height"></canvas><br />
+<img src="sign6.jpg" /><br />
+<canvas id="cvs7" name="cvs7" width="img.width" height="img.height"></canvas><br />
+<img src="sign7.jpg" /><br />
+<canvas id="cvs8" name="cvs8" width="img.width" height="img.height"></canvas><br />
+<img src="sign8.jpg" /><br />
+<canvas id="cvs9" name="cvs9" width="img.width" height="img.height"></canvas><br />
+<img src="sign9.jpg" /><br />
+<canvas id="cvs10" name="cvs10" width="img.width" height="img.height"></canvas><br />
+<img src="sign10.jpg" /><br />
+</body>
+</html>
